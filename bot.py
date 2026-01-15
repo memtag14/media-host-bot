@@ -30,7 +30,6 @@ async def handle_photo(message: Message):
     )
 
     async with aiohttp.ClientSession() as session:
-        # скачиваем файл из Telegram
         async with session.get(telegram_file_url) as resp:
             photo_bytes = await resp.read()
 
@@ -42,12 +41,7 @@ async def handle_photo(message: Message):
             content_type="image/jpeg"
         )
 
-        # отправляем в backend
         async with session.post(BACKEND_UPLOAD_URL, data=data) as resp:
-            if resp.status != 200:
-                await message.answer("❌ Ошибка загрузки")
-                return
-
             result = await resp.json()
             url = result["url"]
 
