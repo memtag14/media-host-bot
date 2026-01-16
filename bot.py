@@ -1,88 +1,74 @@
-import asyncio
 import os
+import asyncio
 import aiohttp
-import tempfile
 
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message
+from aiogram.enums import ContentType
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-BACKEND_URL = "https://media-host-backend.onrender.com"
 
-bot = Bot(token=BOT_TOKEN)
+BACKEND = "https://media-host-backend.onrender.com"
+
+bot = Bot(BOT_TOKEN)
 dp = Dispatcher()
 
 
-async def upload_file(local_path: str, filename: str):
-    async with aiohttp.ClientSession() as session:
-        with open(local_path, "rb") as f:
-            data = aiohttp.FormData()
-            data.add_field(
-                "file",
-                f,
-                filename=filename,
-                content_type="application/octet-stream"
+@dp.message(F.content_type == ContentType.PHOTO)
+async def handle_photo(message: Message):
+    try:
+        photo = message.photo[-1]
+
+        # 1️⃣ Получаем файл от Telegram
+        tg_file = await bot.get_file(photo.file_id)
+        tg_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{tg_file.file_path}"
+
+        async with aiohttp.ClientSession() as session:
+            # 2️⃣ Скачиваем файл
+            async with session.get(tg_url) as r:
+                if r.status != 200:
+                    await message.answer("❌ Не смог скачать файл из Telegram")
+                    return
+                data = await r.read()
+
+            # 3️⃣ Готовим форму (ВАЖНО: поле называется file)
+            form = aiohttp.FormData()
+            form.add_field(
+                name="file",
+                value=data,
+                filename="photo.jpg",
+                content_type="image/jpeg"
             )
 
-            async with session.post(
-                f"{BACKEND_URL}/upload/image",
-                data=data
-            ) as resp:
-                if resp.status != 200:
-                    return None
-                return await resp.json()
+            # 4️⃣ Отправляем в backend
+            async with session.post(f"{BACKEND}/upload/image", data=form) as resp:
+                text = await resp.text()
 
+        # 5️⃣ Пытаемся разобрать JSON
+        if resp.status != 200:
+            await message.answer(f"❌ Backend ответил {resp.status}")
+            return
 
-@dp.message()
-async def handle_message(message: Message):
-    file = None
-    filename = None
+        try:
+            result = eval(text) if text.startswith("{") else None
+        except Exception:
+            result = None
 
-    # 📷 Фото
-    if message.photo:
-        photo = message.photo[-1]
-        file = await bot.get_file(photo.file_id)
-        filename = "image.jpg"
+        if not result or "url" not in result:
+            await message.answer(
+                "❌ Ошибка загрузки\n\n"
+                f"Ответ backend:\n{text}"
+            )
+            return
 
-    # 🎵 Музыка
-    elif message.audio:
-        audio = message.audio
-        file = await bot.get_file(audio.file_id)
-        filename = audio.file_name or "audio.mp3"
+        full_url = BACKEND + result["url"]
 
-    # 🎤 Голосовое
-    elif message.voice:
-        voice = message.voice
-        file = await bot.get_file(voice.file_id)
-        filename = "voice.ogg"
+        await message.answer(
+            f"✅ Фото загружено!\n\n🔗 Прямая ссылка:\n{full_url}"
+        )
 
-    else:
-        await message.answer("Отправь фото 📷 или музыку 🎵")
-        return
-
-    # Временный файл
-    with tempfile.NamedTemporaryFile(delete=False) as tmp:
-        temp_path = tmp.name
-
-    # Скачиваем файл из Telegram
-    await bot.download_file(file.file_path, temp_path)
-
-    # Загружаем в backend
-    result = await upload_file(temp_path, filename)
-    os.remove(temp_path)
-
-    if not result or "url" not in result:
-        await message.answer("❌ Ошибка загрузки")
-        return
-
-    url = result["url"]
-    if url.startswith("/"):
-        url = BACKEND_URL + url
-
-    await message.answer(
-        "✅ Файл загружен!\n\n"
-        f"🔗 Прямая ссылка:\n{url}"
-    )
+    except Exception as e:
+        await message.answer(f"❌ Ошибка:\n{e}")
 
 
 async def main():
