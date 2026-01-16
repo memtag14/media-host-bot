@@ -1,52 +1,69 @@
-import os
-import uuid
-import aiohttp
-from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message
-from aiogram.enums import ContentType
-from dotenv import load_dotenv
 import asyncio
+import os
+import aiohttp
+import tempfile
 
-load_dotenv()
+from aiogram import Bot, Dispatcher
+from aiogram.types import Message
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 BACKEND_URL = "https://media-host-backend.onrender.com"
 
-bot = Bot(BOT_TOKEN)
+bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 
-@dp.message(F.content_type == ContentType.PHOTO)
-async def handle_photo(message: Message):
+@dp.message()
+async def handle_message(message: Message):
+    if not message.photo:
+        await message.answer("Отправь фото 📷")
+        return
+
+    # Берём самое большое фото
     photo = message.photo[-1]
 
+    # Получаем файл от Telegram
     file = await bot.get_file(photo.file_id)
-    file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file.file_path}"
 
+    # Временный файл
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
+        temp_path = tmp.name
+
+    # Скачиваем фото
+    await bot.download_file(file.file_path, temp_path)
+
+    # Отправляем в backend
     async with aiohttp.ClientSession() as session:
-        async with session.get(file_url) as resp:
-            image_bytes = await resp.read()
+        with open(temp_path, "rb") as f:
+            data = aiohttp.FormData()
+            data.add_field(
+                "file",
+                f,
+                filename="image.jpg",
+                content_type="image/jpeg"
+            )
 
-        data = aiohttp.FormData()
-        data.add_field(
-            "file",
-            image_bytes,
-            filename=f"{uuid.uuid4()}.jpg",
-            content_type="image/jpeg",
-        )
+            async with session.post(
+                f"{BACKEND_URL}/upload/image",
+                data=data
+            ) as resp:
+                if resp.status != 200:
+                    await message.answer("❌ Ошибка загрузки")
+                    os.remove(temp_path)
+                    return
 
-        async with session.post(
-            f"{BACKEND_URL}/upload/image",
-            data=data
-        ) as upload:
-            result = await upload.json()
+                result = await resp.json()
 
-    image_path = result["url"]
-    full_url = f"{BACKEND_URL}{image_path}"
+    os.remove(temp_path)
+
+    # Формируем АБСОЛЮТНУЮ ссылку
+    url = result.get("url")
+    if url and url.startswith("/"):
+        url = BACKEND_URL + url
 
     await message.answer(
         "✅ Фото загружено!\n\n"
-        f"🔗 Прямая ссылка:\n{full_url}"
+        f"🔗 Прямая ссылка:\n{url}"
     )
 
 
