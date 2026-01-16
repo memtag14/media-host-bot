@@ -13,34 +13,15 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 
-@dp.message()
-async def handle_message(message: Message):
-    if not message.photo:
-        await message.answer("Отправь фото 📷")
-        return
-
-    # Берём самое большое фото
-    photo = message.photo[-1]
-
-    # Получаем файл от Telegram
-    file = await bot.get_file(photo.file_id)
-
-    # Временный файл
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
-        temp_path = tmp.name
-
-    # Скачиваем фото
-    await bot.download_file(file.file_path, temp_path)
-
-    # Отправляем в backend
+async def upload_file(local_path: str, filename: str):
     async with aiohttp.ClientSession() as session:
-        with open(temp_path, "rb") as f:
+        with open(local_path, "rb") as f:
             data = aiohttp.FormData()
             data.add_field(
                 "file",
                 f,
-                filename="image.jpg",
-                content_type="image/jpeg"
+                filename=filename,
+                content_type="application/octet-stream"
             )
 
             async with session.post(
@@ -48,21 +29,58 @@ async def handle_message(message: Message):
                 data=data
             ) as resp:
                 if resp.status != 200:
-                    await message.answer("❌ Ошибка загрузки")
-                    os.remove(temp_path)
-                    return
+                    return None
+                return await resp.json()
 
-                result = await resp.json()
 
+@dp.message()
+async def handle_message(message: Message):
+    file = None
+    filename = None
+
+    # 📷 Фото
+    if message.photo:
+        photo = message.photo[-1]
+        file = await bot.get_file(photo.file_id)
+        filename = "image.jpg"
+
+    # 🎵 Музыка
+    elif message.audio:
+        audio = message.audio
+        file = await bot.get_file(audio.file_id)
+        filename = audio.file_name or "audio.mp3"
+
+    # 🎤 Голосовое
+    elif message.voice:
+        voice = message.voice
+        file = await bot.get_file(voice.file_id)
+        filename = "voice.ogg"
+
+    else:
+        await message.answer("Отправь фото 📷 или музыку 🎵")
+        return
+
+    # Временный файл
+    with tempfile.NamedTemporaryFile(delete=False) as tmp:
+        temp_path = tmp.name
+
+    # Скачиваем файл из Telegram
+    await bot.download_file(file.file_path, temp_path)
+
+    # Загружаем в backend
+    result = await upload_file(temp_path, filename)
     os.remove(temp_path)
 
-    # Формируем АБСОЛЮТНУЮ ссылку
-    url = result.get("url")
-    if url and url.startswith("/"):
+    if not result or "url" not in result:
+        await message.answer("❌ Ошибка загрузки")
+        return
+
+    url = result["url"]
+    if url.startswith("/"):
         url = BACKEND_URL + url
 
     await message.answer(
-        "✅ Фото загружено!\n\n"
+        "✅ Файл загружен!\n\n"
         f"🔗 Прямая ссылка:\n{url}"
     )
 
