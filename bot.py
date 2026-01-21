@@ -15,22 +15,25 @@ dp = Dispatcher()
 
 @dp.message(F.content_type == ContentType.PHOTO)
 async def handle_photo(message: Message):
-    # 1️⃣ Берём фото
+    await message.answer("📥 Фото получено, обрабатываю...")
+
     photo = message.photo[-1]
 
-    # 2️⃣ Получаем файл от Telegram
-    tg_file = await bot.get_file(photo.file_id)
+    try:
+        tg_file = await bot.get_file(photo.file_id)
+    except Exception as e:
+        await message.answer(f"❌ Ошибка get_file:\n{e}")
+        return
+
     tg_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{tg_file.file_path}"
 
     async with aiohttp.ClientSession() as session:
-        # 3️⃣ Скачиваем фото
         async with session.get(tg_url) as r:
             if r.status != 200:
-                await message.answer("❌ Не удалось скачать фото")
+                await message.answer(f"❌ Не скачалось фото, status={r.status}")
                 return
             data = await r.read()
 
-        # 4️⃣ Отправляем в backend (ВАЖНО: поле называется file)
         form = aiohttp.FormData()
         form.add_field(
             "file",
@@ -40,34 +43,40 @@ async def handle_photo(message: Message):
         )
 
         async with session.post(f"{BACKEND}/upload/image", data=form) as resp:
+            text = await resp.text()
+
+            await message.answer(
+                "📨 Ответ backend:\n"
+                f"status: {resp.status}\n"
+                f"body:\n{text}"
+            )
+
+            if resp.status != 200:
+                return
+
             try:
                 result = await resp.json()
             except Exception:
-                text = await resp.text()
-                await message.answer(f"❌ Backend вернул не JSON:\n{text}")
                 return
 
-    # 5️⃣ Проверяем ответ
     if "url" not in result:
-        await message.answer(f"❌ Ошибка загрузки:\n{result}")
+        await message.answer("❌ В ответе нет url")
         return
 
     full_url = BACKEND + result["url"]
 
-    # 6️⃣ Отдаём ПРЯМУЮ ссылку
     await message.answer(
-        "✅ Фото загружено!\n\n"
+        "✅ ГОТОВО!\n\n"
         f"🔗 Прямая ссылка:\n{full_url}"
     )
 
 
 @dp.message()
 async def fallback(message: Message):
-    await message.answer("📸 Отправь фото — я верну прямую ссылку")
+    await message.answer("📸 Отправь фото")
 
 
 async def main():
-    print("Bot started")
     await dp.start_polling(bot)
 
 
