@@ -1,22 +1,23 @@
 import os
-import asyncio
+import logging
 import requests
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import CommandStart
+from aiogram import Bot, Dispatcher, executor, types
 
 TOKEN = os.getenv("BOT_TOKEN")
 BACKEND_URL = "https://media-host-backend.onrender.com"
 
+logging.basicConfig(level=logging.INFO)
+
 bot = Bot(token=TOKEN)
-dp = Dispatcher()
+dp = Dispatcher(bot)
 
 
-@dp.message(CommandStart())
+@dp.message_handler(commands=["start"])
 async def start(message: types.Message):
     await message.answer("👋 Я жив. Отправь фото или музыку — дам прямую ссылку.")
 
 
-@dp.message(lambda m: m.photo)
+@dp.message_handler(content_types=types.ContentType.PHOTO)
 async def handle_photo(message: types.Message):
     await message.answer("📥 Фото получено, обрабатываю...")
 
@@ -42,7 +43,7 @@ async def handle_photo(message: types.Message):
         await message.answer("❌ Ошибка загрузки")
 
 
-@dp.message(lambda m: m.audio)
+@dp.message_handler(content_types=types.ContentType.AUDIO)
 async def handle_audio(message: types.Message):
     await message.answer("🎵 Музыка получена, загружаю...")
 
@@ -68,9 +69,5 @@ async def handle_audio(message: types.Message):
         await message.answer("❌ Ошибка загрузки")
 
 
-async def main():
-    await dp.start_polling(bot)
-
-
 if __name__ == "__main__":
-    asyncio.run(main())
+    executor.start_polling(dp, skip_updates=True)
