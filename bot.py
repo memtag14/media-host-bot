@@ -14,7 +14,7 @@ dp = Dispatcher(bot)
 
 @dp.message_handler(commands=["start"])
 async def start(message: types.Message):
-    await message.answer("👋 Я жив. Отправь фото или музыку — дам прямую ссылку.")
+    await message.answer("Привет (￣▽￣) Отправь фото или музыку — дам прямую ссылку.")
 
 
 @dp.message_handler(content_types=types.ContentType.PHOTO)
@@ -71,3 +71,4 @@ async def handle_audio(message: types.Message):
 
 if __name__ == "__main__":
     executor.start_polling(dp, skip_updates=True)
+
